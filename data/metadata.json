@@ -1,0 +1,25 @@
+{
+  "registros": 285,
+  "partidos": 39,
+  "corporaciones": [
+    "Cámara",
+    "Senado"
+  ],
+  "circunscripciones": [
+    "AFRODESCENDIENTES",
+    "CITREP",
+    "INDÍGENAS",
+    "NACIONAL",
+    "OPOSICIÓN",
+    "TERRITORIAL"
+  ],
+  "territorios": 78,
+  "fotos_extraidas": 283,
+  "metodologia_votos": "La votación de partido/lista se conserva una sola vez por grupo corporación-circunscripción-departamento-partido y se muestra en el líder de lista; no se imputa como voto individual cuando la lista fue cerrada.",
+  "version": "V7",
+  "ajustes_v7": [
+    "Orden descendente en Senado/Cámara dentro de cada bancada y circunscripciones por sector político.",
+    "Corrección territorial y perfil de Selmen David Arana Cano: Bolívar, Cámara, Cambio Radical y ALMA.",
+    "Correcciones de sector para Germán Rogelio Rozo Anís, Camilo Andrés Gómez Mosquera, Omar Francisco Vidal Rojas, César Antonio Barrera Vergara y Yessid Enrique Pulgar Daza."
+  ]
+}
