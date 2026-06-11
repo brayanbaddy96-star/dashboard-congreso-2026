@@ -116,6 +116,28 @@ label, .stSelectbox label, .stRadio label, .stMultiSelect label{color:#e5e7eb !i
 .logo-badge{width:70px;height:70px;border-radius:22px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:950;font-size:1.12rem;letter-spacing:-.02em;box-shadow:0 14px 28px rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.25);}
 .party-title{font-size:1.32rem;font-weight:950;color:#fff;letter-spacing:-.025em;margin-bottom:.15rem;}
 .party-sub{font-size:.88rem;color:#a7b1c2;line-height:1.35;}
+
+/* Reporte visual del grupo seleccionado */
+.group-report{margin:.25rem 0 1rem;}
+.group-kpis{display:grid; grid-template-columns:repeat(5,minmax(150px,1fr)); gap:.62rem; margin:.65rem 0 .85rem;}
+@media(max-width:1350px){.group-kpis{grid-template-columns:repeat(3,minmax(150px,1fr));}}
+@media(max-width:850px){.group-kpis{grid-template-columns:repeat(2,minmax(140px,1fr));}}
+.group-kpi{background:linear-gradient(180deg,#121b2d,#0b1220); border:1px solid rgba(255,255,255,.12); border-radius:20px; padding:.78rem .86rem; min-height:102px; box-shadow:0 16px 42px rgba(0,0,0,.23); overflow:hidden;}
+.group-kpi-label{font-size:.66rem; text-transform:uppercase; letter-spacing:.085em; color:#93a4bb; font-weight:950; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.group-kpi-value{font-size:clamp(1.18rem,1.7vw,1.75rem); color:#fff; font-weight:950; line-height:1.05; margin-top:.34rem; overflow-wrap:anywhere;}
+.group-kpi-help{font-size:.73rem; color:#a7b1c2; line-height:1.25; margin-top:.3rem;}
+.group-panels{display:grid; grid-template-columns:repeat(3,minmax(240px,1fr)); gap:.72rem; margin:.55rem 0 .75rem;}
+@media(max-width:1100px){.group-panels{grid-template-columns:1fr;}}
+.group-panel{background:linear-gradient(180deg,#101827,#0c1424); border:1px solid rgba(255,255,255,.12); border-radius:22px; padding:.9rem .95rem; box-shadow:0 16px 46px rgba(0,0,0,.22);}
+.group-panel-title{display:flex; align-items:center; justify-content:space-between; gap:.55rem; color:#f8fafc; font-size:.88rem; text-transform:uppercase; letter-spacing:.07em; font-weight:950; margin-bottom:.7rem;}
+.group-panel-title span{color:#93a4bb; font-size:.72rem; letter-spacing:0; text-transform:none; font-weight:800;}
+.dist-item{display:grid; grid-template-columns:minmax(96px,1fr) 44px 56px; align-items:center; gap:.5rem; margin:.48rem 0;}
+.dist-label{font-size:.80rem; color:#e5edf8; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.dist-count{font-size:.82rem; font-weight:950; color:#fff; text-align:right;}
+.dist-pct{font-size:.75rem; font-weight:900; color:#93a4bb; text-align:right;}
+.dist-track{grid-column:1 / -1; height:8px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; border:1px solid rgba(255,255,255,.06);}
+.dist-fill{height:100%; width:var(--w); background:var(--accent); border-radius:999px; box-shadow:0 0 18px color-mix(in srgb, var(--accent) 45%, transparent);}
+.group-note{background:rgba(245,158,11,.10); border:1px solid rgba(251,191,36,.28); border-radius:18px; padding:.76rem .88rem; color:#fde68a; font-size:.84rem; line-height:1.38; margin:.55rem 0 .85rem;}
 .pill{display:inline-block; padding:.30rem .58rem; border-radius:999px; background:#172033; color:#dbeafe; font-size:.74rem; font-weight:900; margin:.13rem .15rem .13rem 0; border:1px solid rgba(255,255,255,.12);}
 .pill-red{background:rgba(227,6,19,.15);color:#fecaca;border-color:rgba(248,113,113,.35);}
 .pill-blue{background:rgba(59,130,246,.15);color:#bfdbfe;border-color:rgba(96,165,250,.35);}
@@ -171,7 +193,7 @@ def load_data() -> pd.DataFrame:
     for c in text_cols:
         if c in df.columns:
             df[c] = df[c].fillna("").astype(str).str.strip()
-    for c in ["votos_esc", "votos_pre", "votos_partido_original", "votos_lista_grupo", "votos_partido_visible", "orden_original"]:
+    for c in ["votos_esc", "votos_pre", "votos_partido_original", "votos_lista_grupo", "votos_partido_visible", "votos_lista_ficha", "orden_original"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in ["es_lider_lista", "tiene_foto"]:
@@ -185,6 +207,15 @@ def load_data() -> pd.DataFrame:
     df["sector"] = df["sector"].replace("", "No registra").fillna("No registra")
     df["apoyo_presidencia_primera"] = df["apoyo_presidencia_primera"].replace("", "No registra").fillna("No registra")
     df["apoyo_presidencia_segunda"] = df["apoyo_presidencia_segunda"].replace("", "No registra").fillna("No registra")
+
+    # Para análisis agregados se conserva votos_partido_visible solo en la fila líder,
+    # evitando duplicar votación de listas. Para fichas individuales sí se muestra
+    # la votación total de la lista/grupo a todos sus integrantes.
+    if "votos_lista_ficha" not in df.columns:
+        df["votos_lista_ficha"] = np.nan
+    df["votos_lista_ficha"] = df["votos_lista_ficha"].fillna(df.get("votos_lista_grupo"))
+    df["votos_lista_ficha"] = df["votos_lista_ficha"].fillna(df.get("votos_partido_visible"))
+    df["votos_lista_ficha"] = df["votos_lista_ficha"].fillna(df.get("votos_partido_original"))
 
     def block(row):
         circ = str(row.get("circunscripcion", "")).strip().upper()
@@ -310,6 +341,93 @@ def top_mode(s: pd.Series) -> str:
     s = s[(s != "") & (s.str.lower() != "no registra")]
     return "No registra" if s.empty else s.value_counts().index[0]
 
+
+def _palette_lookup(label: str, palette: dict, default: str = "#64748B") -> str:
+    key = _norm_key(label)
+    return palette.get(key, default)
+
+
+SECTOR_COLORS = {
+    "IZQUIERDA": "#EF4444",
+    "DERECHA": "#3B82F6",
+    "INDEPENDIENTE": "#10B981",
+    "NO REGISTRA": "#94A3B8",
+}
+
+PRES_COLORS = {
+    "IVAN CEPEDA": "#60A5FA",
+    "PALOMA VALENCIA": "#F87171",
+    "ABELARDO DE LA ESPRIELLA": "#C084FC",
+    "MAURICIO LIZCANO": "#34D399",
+    "SERGIO FAJARDO": "#FBBF24",
+    "NO REGISTRA": "#94A3B8",
+}
+
+
+def distribution_bars(series: pd.Series, order: List[str] = None, max_items: int = 8, palette: dict = None) -> str:
+    """Bloque visual de distribución para el reporte de bancada/grupo.
+
+    Se devuelve HTML compacto, sin sangrías iniciales, para evitar que
+    Markdown lo interprete como bloque de código dentro de Streamlit.
+    """
+    s = series.fillna("No registra").replace("", "No registra").astype(str).str.strip()
+    vc = s.value_counts()
+    if order:
+        used = set()
+        ordered = []
+        for x in order:
+            v = int(vc.get(x, 0))
+            if v > 0:
+                ordered.append((x, v))
+                used.add(x)
+        ordered += [(idx, int(val)) for idx, val in vc.items() if idx not in used]
+    else:
+        ordered = [(idx, int(val)) for idx, val in vc.items()]
+    ordered = ordered[:max_items]
+    total = max(int(vc.sum()), 1)
+    if not ordered:
+        return "<div class='dist-item'><div class='dist-label'>No registra</div><div class='dist-count'>0</div><div class='dist-pct'>0%</div><div class='dist-track'><div class='dist-fill' style='--w:0%;--accent:#64748B;'></div></div></div>"
+    html = []
+    for label, val in ordered:
+        pct = (val / total) * 100
+        color = _palette_lookup(label, palette or {}, default="#64748B")
+        html.append(
+            "<div class='dist-item'>"
+            f"<div class='dist-label' title='{h(label)}'>{h(abbreviate(label, 32))}</div>"
+            f"<div class='dist-count'>{fmt_int(val)}</div>"
+            f"<div class='dist-pct'>{pct:.0f}%</div>"
+            f"<div class='dist-track'><div class='dist-fill' style='--w:{pct:.2f}%;--accent:{color};'></div></div>"
+            "</div>"
+        )
+    return "".join(html)
+
+
+def selected_party_report(group_df: pd.DataFrame) -> str:
+    total = len(group_df)
+    sen = int((group_df["corporacion"] == "Senado").sum()) if total else 0
+    cam = int((group_df["corporacion"] == "Cámara").sum()) if total else 0
+    orgs = int(group_df["partido"].replace("", np.nan).nunique()) if total else 0
+    circ = int(group_df["circunscripcion"].replace("", np.nan).nunique()) if total else 0
+    vot_lista = group_df[["grupo_lista_id", "votos_lista_ficha"]].drop_duplicates()["votos_lista_ficha"].sum(min_count=1)
+    kpis = "".join([
+        f"<div class='group-kpi'><div class='group-kpi-label'>Curules del grupo</div><div class='group-kpi-value'>{fmt_int(total)}</div><div class='group-kpi-help'>Total bajo filtros activos</div></div>",
+        f"<div class='group-kpi'><div class='group-kpi-label'>Senado / Cámara</div><div class='group-kpi-value'>{fmt_int(sen)} / {fmt_int(cam)}</div><div class='group-kpi-help'>Distribución corporativa</div></div>",
+        f"<div class='group-kpi'><div class='group-kpi-label'>Organizaciones reales</div><div class='group-kpi-value'>{fmt_int(orgs)}</div><div class='group-kpi-help'>Partidos/listas registrados</div></div>",
+        f"<div class='group-kpi'><div class='group-kpi-label'>Circunscripciones</div><div class='group-kpi-value'>{fmt_int(circ)}</div><div class='group-kpi-help'>Tipos presentes en el grupo</div></div>",
+        f"<div class='group-kpi'><div class='group-kpi-label'>Voto lista/grupo</div><div class='group-kpi-value'>{fmt_compact(vot_lista)}</div><div class='group-kpi-help'>Contexto electoral, sin duplicar agregados</div></div>",
+    ])
+    sector_html = distribution_bars(group_df['sector'], SECTOR_ORDER, max_items=5, palette=SECTOR_COLORS)
+    pv_html = distribution_bars(group_df['apoyo_presidencia_primera'], max_items=6, palette=PRES_COLORS)
+    sv_html = distribution_bars(group_df['apoyo_presidencia_segunda'], max_items=6, palette=PRES_COLORS)
+    panels = (
+        "<div class='group-panels'>"
+        "<div class='group-panel'><div class='group-panel-title'>Composición política <span>curules</span></div>" + sector_html + "</div>"
+        "<div class='group-panel'><div class='group-panel-title'>Apoyo presidencial · 1ª vuelta <span>registros</span></div>" + pv_html + "</div>"
+        "<div class='group-panel'><div class='group-panel-title'>Apoyo presidencial · 2ª vuelta <span>registros</span></div>" + sv_html + "</div>"
+        "</div>"
+    )
+    note = "<div class='group-note'><b>Nota de lectura.</b> Esta sección describe la composición interna registrada para los congresistas del grupo seleccionado. No debe leerse como posición oficial única de toda la bancada. La votación de lista/grupo se muestra como contexto de la ficha, pero no se duplica en rankings ni KPIs agregados.</div>"
+    return "<div class='group-report'><div class='group-kpis'>" + kpis + "</div>" + panels + note + "</div>"
 
 def options_from(df: pd.DataFrame, col: str) -> List[str]:
     return sorted([str(v) for v in df[col].dropna().unique() if str(v).strip() and str(v).lower() != "nan"])
@@ -1034,8 +1152,8 @@ elif modulo.startswith("5"):
 elif modulo.startswith("6"):
     guide("Flujo recomendado de consulta", [
         "Primero seleccione bancada o grupo especial. Después se habilita el listado de congresistas de ese grupo.",
-        "La ficha diferencia partido real, grupo visual, circunscripción, territorio, sector y apoyos presidenciales.",
-        "Cuando no existe voto individual, la ficha lo marca como lista cerrada o sin dato; no se imputa la votación del partido al congresista."
+        "La ficha diferencia partido real, grupo visual, circunscripción, territorio, sector, apoyos presidenciales y votación de lista/grupo.",
+        "Cuando no existe voto individual, la ficha lo marca como lista cerrada; muestra la votación total de la lista/grupo sin convertirla en voto personal del congresista."
     ])
     ps = party_summary(filtered)
     groups = ps["bloque_visual"].tolist()
@@ -1048,11 +1166,10 @@ elif modulo.startswith("6"):
   <div class='logo-badge' style='background:{color};'>{h(initials(selected_group))}</div>
   <div>
     <div class='party-title'>{h(selected_group)}</div>
-    <div class='party-sub'>{fmt_int(len(group_df))} curules · {fmt_int(group_df['partido'].nunique())} organización(es) real(es) · Sector dominante: {h(top_mode(group_df['sector']))}</div>
-    <span class='pill pill-blue'>1ª vuelta: {h(top_mode(group_df['apoyo_presidencia_primera']))}</span>
-    <span class='pill pill-red'>2ª vuelta: {h(top_mode(group_df['apoyo_presidencia_segunda']))}</span>
+    <div class='party-sub'>Reporte previo del grupo seleccionado: composición por corporación, sector político y apoyos presidenciales registrados en la base.</div>
   </div>
 </div>
+{selected_party_report(group_df)}
 """,
         unsafe_allow_html=True,
     )
@@ -1104,7 +1221,7 @@ elif modulo.startswith("6"):
     <div class="title">Ficha técnica individual</div>
     <div class="metrics">
       <div class="metric"><div class="lab">Voto individual</div><div class="val">{fmt_int(vote_ind)}</div></div>
-      <div class="metric"><div class="lab">Voto lista visible</div><div class="val">{fmt_int(person['votos_partido_visible'])}</div></div>
+      <div class="metric"><div class="lab">Voto lista / grupo</div><div class="val">{fmt_int(person['votos_lista_ficha'])}</div></div>
       <div class="metric"><div class="lab">Corporación</div><div class="val">{h(person['corporacion'])}</div></div>
       <div class="metric"><div class="lab">Grupo visual</div><div class="val">{h(person['bloque_visual'])}</div></div>
     </div>
@@ -1126,10 +1243,10 @@ elif modulo.startswith("6"):
     same_list = df0[df0["grupo_lista_id"] == person["grupo_lista_id"]].copy()
     if len(same_list) > 1:
         st.markdown("<div class='section-title'>Integrantes de la misma lista / territorio</div>", unsafe_allow_html=True)
-        table = same_list[["nombre_titulo", "corporacion", "circunscripcion", "territorio_lectura", "partido_corto", "tipo_votacion", "votos_esc", "votos_partido_visible"]].copy()
-        table.columns = ["Congresista", "Corporación", "Circunscripción", "Territorio", "Partido", "Tipo votación", "Voto individual", "Voto lista visible"]
+        table = same_list[["nombre_titulo", "corporacion", "circunscripcion", "territorio_lectura", "partido_corto", "tipo_votacion", "votos_esc", "votos_lista_ficha"]].copy()
+        table.columns = ["Congresista", "Corporación", "Circunscripción", "Territorio", "Partido", "Tipo votación", "Voto individual", "Voto lista / grupo"]
         table["Voto individual"] = table["Voto individual"].map(fmt_int)
-        table["Voto lista visible"] = table["Voto lista visible"].map(fmt_int)
+        table["Voto lista / grupo"] = table["Voto lista / grupo"].map(fmt_int)
         safe_df(table, height=330)
 
 else:
@@ -1138,11 +1255,11 @@ else:
         "El tablero separa votación de Senado y Cámara; no hace una suma nacional impropia de votos.",
         "Las listas cerradas se reportan como sin voto individual y conservan la votación de lista como atributo del grupo."
     ])
-    cols = ["nombre_titulo", "corporacion", "circunscripcion", "territorio_lectura", "bloque_visual", "partido", "sector", "apoyo_presidencia_primera", "apoyo_presidencia_segunda", "tipo_votacion", "votos_esc", "votos_pre", "votos_partido_visible", "asesor"]
+    cols = ["nombre_titulo", "corporacion", "circunscripcion", "territorio_lectura", "bloque_visual", "partido", "sector", "apoyo_presidencia_primera", "apoyo_presidencia_segunda", "tipo_votacion", "votos_esc", "votos_pre", "votos_lista_ficha", "asesor"]
     table = filtered[cols].copy()
-    table.columns = ["Congresista", "Corporación", "Circunscripción", "Territorio", "Grupo visual", "Partido / organización real", "Sector", "1ª vuelta", "2ª vuelta", "Tipo votación", "Voto ESC", "Voto PRE", "Voto lista visible", "Asesor"]
+    table.columns = ["Congresista", "Corporación", "Circunscripción", "Territorio", "Grupo visual", "Partido / organización real", "Sector", "1ª vuelta", "2ª vuelta", "Tipo votación", "Voto ESC", "Voto PRE", "Voto lista / grupo", "Asesor"]
     display = table.copy()
-    for c in ["Voto ESC", "Voto PRE", "Voto lista visible"]:
+    for c in ["Voto ESC", "Voto PRE", "Voto lista / grupo"]:
         display[c] = display[c].map(fmt_int)
     safe_df(display, height=520)
     csv = table.to_csv(index=False, encoding="utf-8-sig")
