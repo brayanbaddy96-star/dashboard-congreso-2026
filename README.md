@@ -30,3 +30,20 @@ git add .
 git commit -m "Ajuste fichas y reporte de bancada"
 git push
 ```
+
+
+## V16
+
+- El módulo de integración de comisiones identifica empates decisivos por residuo.
+- Cuando hay más bancadas empatadas que cupos disponibles, la curul queda pendiente y se listan las bancadas que compiten por ella, sin asignación automática arbitraria.
+
+
+## Actualización V19
+- Base de integración de comisiones actualizada con el archivo más reciente suministrado por el usuario.
+- Total de registros de comisiones procesados: 39.
+- El módulo conserva el cálculo por cuociente, el control opcional de inclusión CITREP y la identificación de empates por residuo sin asignación automática.
+
+
+## Actualización V20
+
+Se incorporó la nueva matriz completa de comisiones (53 registros válidos): Cámara Constitucional/Legal/Especial/Accidental y Senado Constitucional/Legal/Especial/Accidental. El cálculo usa cupos efectivos con adiciones CITREP/oposición cuando aplica.

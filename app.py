@@ -14,6 +14,7 @@ import streamlit.components.v1 as components
 
 BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR / "data" / "congresistas_2026_2030.csv"
+COMMISSIONS_PATH = BASE_DIR / "data" / "comisiones_definicion.csv"
 PLACEHOLDER = BASE_DIR / "assets" / "placeholder.svg"
 
 st.set_page_config(
@@ -144,6 +145,24 @@ label, .stSelectbox label, .stRadio label, .stMultiSelect label{color:#e5e7eb !i
 .pill-green{background:rgba(34,197,94,.14);color:#bbf7d0;border-color:rgba(74,222,128,.35);}
 .pill-amber{background:rgba(245,158,11,.14);color:#fde68a;border-color:rgba(251,191,36,.35);}
 
+
+.tie-panel{background:linear-gradient(135deg,rgba(245,158,11,.14),rgba(15,23,42,.96));border:1px solid rgba(251,191,36,.30);border-radius:24px;padding:1rem 1.05rem;margin:.7rem 0 1.1rem;box-shadow:0 18px 54px rgba(0,0,0,.26);}
+.tie-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:.72rem;}
+.tie-title{font-size:1.02rem;font-weight:950;color:#fef3c7;letter-spacing:-.01em;}
+.tie-sub{font-size:.84rem;color:#fde68a;line-height:1.38;margin-top:.18rem;max-width:1050px;}
+.tie-pill{display:inline-flex;align-items:center;gap:.35rem;border-radius:999px;padding:.42rem .7rem;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.35);color:#fef3c7;font-size:.78rem;font-weight:950;white-space:nowrap;}
+.tie-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.65rem;margin-top:.65rem;}
+.tie-card{background:rgba(8,16,30,.78);border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:.78rem .82rem;min-height:106px;}
+.tie-bancada{display:flex;align-items:center;gap:.5rem;font-size:.88rem;font-weight:950;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tie-dot{width:14px;height:14px;border-radius:50%;border:1px solid rgba(255,255,255,.7);flex:0 0 auto;}
+.tie-meta{display:grid;grid-template-columns:1fr 1fr;gap:.42rem;margin-top:.65rem;}
+.tie-mini{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:.48rem .55rem;}
+.tie-mini-lab{font-size:.62rem;color:#93a4bb;text-transform:uppercase;letter-spacing:.065em;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tie-mini-val{font-size:1.08rem;color:#fff;font-weight:950;line-height:1;margin-top:.22rem;}
+.tie-slot-row{display:flex;flex-wrap:wrap;gap:.38rem;margin:.55rem 0 .35rem;}
+.tie-slot{width:34px;height:34px;border-radius:12px;background:rgba(251,191,36,.16);border:1px dashed rgba(251,191,36,.55);display:flex;align-items:center;justify-content:center;color:#fef3c7;font-weight:950;}
+.tie-empty{background:rgba(34,197,94,.11);border:1px solid rgba(74,222,128,.30);border-radius:22px;padding:.85rem .95rem;color:#bbf7d0;margin:.75rem 0 1.05rem;line-height:1.42;}
+
 .profile-card{display:grid; grid-template-columns:310px 1fr; gap:1.35rem; background:linear-gradient(180deg,#111a2b,#0d1526); border:1px solid var(--line); border-radius:30px; padding:1.15rem; box-shadow:0 22px 62px rgba(0,0,0,.32); margin:.45rem 0 1.15rem;}
 @media(max-width:950px){.profile-card{grid-template-columns:1fr;}.profile-photo{max-width:280px;}}
 .profile-photo{width:100%; border-radius:24px; object-fit:cover; aspect-ratio:4/4.2; background:#1f2937; border:1px solid rgba(255,255,255,.14);}
@@ -260,6 +279,31 @@ def load_data() -> pd.DataFrame:
 
 
 df0 = load_data()
+
+
+@_cache_data(show_spinner=False)
+def load_commissions() -> pd.DataFrame:
+    if not COMMISSIONS_PATH.exists():
+        return pd.DataFrame(columns=["categoria", "corporacion", "tipo_comision", "nombre_comision", "cantidad_integrantes", "integrantes", "restriccion"])
+    cm = pd.read_csv(COMMISSIONS_PATH, encoding="utf-8-sig")
+    for c in ["categoria", "corporacion", "tipo_comision", "nombre_comision", "cantidad_integrantes", "cantidad_texto", "restriccion"]:
+        if c in cm.columns:
+            cm[c] = cm[c].fillna("").astype(str).str.strip()
+    if "integrantes" in cm.columns:
+        cm["integrantes"] = pd.to_numeric(cm["integrantes"], errors="coerce").fillna(0).astype(int)
+    else:
+        cm["integrantes"] = cm["cantidad_integrantes"].astype(str).str.extract(r"(\d+)").fillna(0).astype(int)
+    for c in ["adicional_citrep", "adicional_oposicion", "integrantes_sin_citrep", "integrantes_con_adiciones", "orden_comision"]:
+        if c in cm.columns:
+            cm[c] = pd.to_numeric(cm[c], errors="coerce").fillna(0).astype(int)
+        else:
+            cm[c] = 0
+    if "ley_2267" not in cm.columns:
+        cm["ley_2267"] = ""
+    return cm
+
+
+comisiones_df = load_commissions()
 
 # =============================================================================
 # UTILIDADES
@@ -684,6 +728,21 @@ def kpis_for_module(data: pd.DataFrame, view_label: str, modulo_label: str) -> L
             ("Especiales", fmt_int(specials), "CITREP, Afro, Indígenas, Oposición"),
         ]
 
+    if modulo_label.startswith("7"):
+        cm = load_commissions()
+        total_comm = len(cm)
+        constitutional = int((cm["tipo_comision"].str.upper() == "CONSTITUCIONAL").sum()) if not cm.empty else 0
+        legal = int((cm["tipo_comision"].str.upper() == "LEGAL").sum()) if not cm.empty else 0
+        sen_comm = int((cm["corporacion"] == "Senado").sum()) if not cm.empty else 0
+        cam_comm = int((cm["corporacion"] == "Cámara").sum()) if not cm.empty else 0
+        return [
+            ("Comisiones", fmt_int(total_comm), "Registros del archivo de integración"),
+            ("Constitucionales", fmt_int(constitutional), "Comisiones permanentes por corporación"),
+            ("Legales", fmt_int(legal), "Propias, bicamerales e interparlamentarias"),
+            ("Cámara/Senado", f"{fmt_int(cam_comm)} / {fmt_int(sen_comm)}", "Registros por corporación"),
+            ("Método", "Cuociente", "Parte entera + mayores residuos"),
+        ]
+
     if modulo_label.startswith("6"):
         photos = int(data["tiene_foto"].sum()) if "tiene_foto" in data else 0
         prof = int(data["perfil"].astype(str).str.len().gt(5).sum()) if "perfil" in data else 0
@@ -985,6 +1044,278 @@ def circ_special_fig(data: pd.DataFrame) -> go.Figure:
     fig.update_xaxes(color="#e5e7eb", tickangle=-28)
     return fig
 
+
+# =============================================================================
+# INTEGRACIÓN DE COMISIONES POR CUOCIENTE
+# =============================================================================
+def parse_int_safe(x) -> int:
+    try:
+        return int(float(x))
+    except Exception:
+        m = re.search(r"\d+", str(x))
+        return int(m.group(0)) if m else 0
+
+
+def effective_commission_seats(row, include_citrep: bool = True) -> int:
+    """Cupos efectivos de la comisión.
+
+    La columna integrantes conserva el cupo base. Las adiciones de la Ley 2267
+    se suman cuando aplica: CITREP si el usuario activa el botón; oposición
+    siempre se computa como cupo adicional, pero su curul se imputa al partido
+    registrado en la base para el universo de bancadas.
+    """
+    base = parse_int_safe(row.get("integrantes", 0))
+    add_opp = parse_int_safe(row.get("adicional_oposicion", 0))
+    add_citrep = parse_int_safe(row.get("adicional_citrep", 0)) if include_citrep else 0
+    return int(base + add_opp + add_citrep)
+
+
+def commission_bancada(row) -> str:
+    """Agrupación específica para el módulo de comisiones.
+
+    - Las curules por oposición se imputan al partido real registrado, no a un bloque separado.
+    - CITREP se conserva como bloque especial y puede incluirse/excluirse desde el módulo.
+    """
+    circ = _norm_key(row.get("circunscripcion", ""))
+    if circ == "OPOSICION":
+        partido = clean_value(row.get("partido_corto", ""), "") or clean_value(row.get("partido", ""), "")
+        return partido or "PACTO HISTÓRICO"
+    if circ == "CITREP":
+        return "CITREP"
+    return clean_value(row.get("bloque_visual", ""), "") or clean_value(row.get("partido_corto", ""), "") or clean_value(row.get("partido", ""), "No registra")
+
+
+def commission_universe(data: pd.DataFrame, corporation: str, restriction: str = "", include_citrep: bool = True) -> pd.DataFrame:
+    d = data[data["corporacion"] == corporation].copy()
+    circ_keys = d["circunscripcion"].map(_norm_key)
+    restricted_citrep = bool(restriction and _norm_key(restriction) == "CITREP")
+
+    if restricted_citrep:
+        d = d[circ_keys == "CITREP"].copy()
+    elif not include_citrep:
+        d = d[circ_keys != "CITREP"].copy()
+
+    if not d.empty:
+        d["bancada_comision"] = d.apply(commission_bancada, axis=1)
+    return d
+
+
+def allocate_commission(data: pd.DataFrame, corporation: str, seats: int, restriction: str = "", include_citrep: bool = True) -> pd.DataFrame:
+    """Proyección por cuociente electoral: cuota = curules corporación / cupos comisión.
+
+    Se asigna parte entera de la división curules_partido / cuota. Los cupos restantes
+    se asignan por mayores residuos solo cuando no existe empate decisivo. Si varias
+    bancadas tienen el mismo residuo y compiten por menos cupos que competidores, el
+    cupo queda marcado como pendiente por desempate y no se adjudica automáticamente.
+    """
+    columns = [
+        "bancada", "curules_corporacion", "cuociente", "cuota_decimal", "parte_entera",
+        "residuo", "curules_residuo", "curules_comision", "participacion",
+        "empate_residuo", "cupos_empate_disputados", "grupo_empate", "competidores_empate"
+    ]
+    d = commission_universe(data, corporation, restriction, include_citrep=include_citrep)
+    if d.empty or seats <= 0:
+        return pd.DataFrame(columns=columns)
+
+    counts = d.groupby("bancada_comision", as_index=False).size().rename(columns={"size": "curules_corporacion"})
+    counts = counts.sort_values(["curules_corporacion", "bancada_comision"], ascending=[False, True]).reset_index(drop=True)
+    total_curules = int(counts["curules_corporacion"].sum())
+    quotient = total_curules / seats if seats else np.nan
+    counts["cuociente"] = quotient
+    counts["cuota_decimal"] = counts["curules_corporacion"] / quotient if quotient else 0
+    counts["parte_entera"] = np.floor(counts["cuota_decimal"]).astype(int)
+    counts["residuo"] = counts["cuota_decimal"] - counts["parte_entera"]
+    assigned = int(counts["parte_entera"].sum())
+    remaining = max(seats - assigned, 0)
+    counts["curules_residuo"] = 0
+    counts["empate_residuo"] = False
+    counts["cupos_empate_disputados"] = 0
+    counts["grupo_empate"] = ""
+    counts["competidores_empate"] = ""
+
+    if remaining > 0 and not counts.empty:
+        ranked = counts.sort_values(["residuo", "curules_corporacion", "bancada_comision"], ascending=[False, False, True]).copy()
+        ranked["residuo_key"] = ranked["residuo"].round(12)
+        seats_left = remaining
+        tie_counter = 1
+        for residue_key, grp in ranked.groupby("residuo_key", sort=False):
+            if seats_left <= 0:
+                break
+            grp_idx = grp.index.tolist()
+            n_competitors = len(grp_idx)
+            if n_competitors <= seats_left:
+                counts.loc[grp_idx, "curules_residuo"] = 1
+                seats_left -= n_competitors
+            else:
+                # Empate decisivo: no se adjudican automáticamente los cupos de este tramo.
+                # Quedan pendientes los cupos disponibles y compiten todas las bancadas con el mismo residuo.
+                competitors = counts.loc[grp_idx, "bancada_comision"].astype(str).tolist()
+                tie_id = f"Empate {tie_counter}"
+                counts.loc[grp_idx, "empate_residuo"] = True
+                counts.loc[grp_idx, "cupos_empate_disputados"] = int(seats_left)
+                counts.loc[grp_idx, "grupo_empate"] = tie_id
+                counts.loc[grp_idx, "competidores_empate"] = "; ".join(competitors)
+                break
+
+    counts["curules_comision"] = counts["parte_entera"] + counts["curules_residuo"]
+    counts["participacion"] = counts["curules_comision"] / seats * 100 if seats else 0
+    counts = counts.rename(columns={"bancada_comision": "bancada"})
+    counts = counts.sort_values(["curules_comision", "curules_corporacion", "residuo"], ascending=[False, False, False]).reset_index(drop=True)
+    return counts[columns]
+
+
+def commission_allocation_fig(alloc: pd.DataFrame, commission_name: str) -> go.Figure:
+    d = alloc[alloc["curules_comision"] > 0].copy()
+    d = d.sort_values("curules_comision", ascending=True)
+    colors = [party_color(x) for x in d["bancada"]]
+    fig = go.Figure(go.Bar(
+        x=d["curules_comision"], y=[abbreviate(x, 28) for x in d["bancada"]], orientation="h",
+        marker=dict(color=colors, line=dict(color="rgba(255,255,255,.72)", width=1)),
+        text=[fmt_int(x) for x in d["curules_comision"]], textposition="outside", cliponaxis=False,
+        customdata=np.stack([d["bancada"], d["curules_corporacion"], d["parte_entera"], d["residuo"], d["curules_residuo"]], axis=-1) if not d.empty else None,
+        hovertemplate="<b>%{customdata[0]}</b><br>Curules corporación: %{customdata[1]}<br>Parte entera: %{customdata[2]}<br>Residuo: %{customdata[3]:.3f}<br>Curul por residuo: %{customdata[4]}<br>Total comisión: %{x}<extra></extra>",
+    ))
+    mx = float(d["curules_comision"].max()) if not d.empty else 1
+    fig.update_layout(title=dict(text=f"Asignación proyectada · {commission_name}", x=.02), height=max(420, 31*len(d)+115), margin=dict(l=185, r=55, t=65, b=45), showlegend=False)
+    fig.update_xaxes(range=[0, mx*1.25], gridcolor="rgba(255,255,255,.10)", color="#cbd5e1", title="Curules en comisión")
+    fig.update_yaxes(color="#e5e7eb", automargin=True)
+    return fig
+
+
+def commission_overview_fig(data: pd.DataFrame, commissions: pd.DataFrame, corporation: str, tipo: str = "Todas", include_citrep: bool = True) -> go.Figure:
+    cm = commissions[commissions["corporacion"] == corporation].copy()
+    if tipo != "Todas":
+        cm = cm[cm["tipo_comision"] == tipo].copy()
+    rows = []
+    for _, r in cm.iterrows():
+        if not include_citrep and _norm_key(r.get("restriccion", "")) == "CITREP":
+            continue
+        eff_seats = effective_commission_seats(r, include_citrep=include_citrep)
+        alloc = allocate_commission(data, r["corporacion"], eff_seats, r.get("restriccion", ""), include_citrep=include_citrep)
+        if alloc.empty:
+            continue
+        for a in alloc.itertuples(index=False):
+            if int(a.curules_comision) > 0:
+                rows.append({"comision": abbreviate(r["nombre_comision"], 30), "bancada": a.bancada, "curules": int(a.curules_comision)})
+    dd = pd.DataFrame(rows)
+    if dd.empty:
+        return go.Figure()
+    # top bancadas por cupos acumulados en las comisiones de esa vista
+    top_b = dd.groupby("bancada")["curules"].sum().sort_values(ascending=False).head(10).index.tolist()
+    dd = dd[dd["bancada"].isin(top_b)]
+    pivot = dd.pivot_table(index="comision", columns="bancada", values="curules", aggfunc="sum", fill_value=0)
+    pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
+    fig = go.Figure()
+    y_labels = [abbreviate(x, 44) for x in pivot.index.tolist()]
+    for b in top_b:
+        vals = pivot[b].tolist() if b in pivot.columns else [0]*len(pivot)
+        fig.add_trace(go.Bar(
+            y=y_labels,
+            x=vals,
+            orientation="h",
+            name=abbreviate(b, 18),
+            marker=dict(color=party_color(b), line=dict(color="rgba(255,255,255,.55)", width=.6)),
+            hovertemplate="<b>%{y}</b><br>" + h(abbreviate(b, 26)) + ": %{x}<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack",
+        title=dict(text=f"Mapa de asignación por comisión · {corporation}", x=.02),
+        height=max(560, 34*len(pivot)+160),
+        margin=dict(l=260, r=35, t=65, b=120),
+        legend=dict(orientation="h", y=-.18),
+    )
+    fig.update_xaxes(title="Curules proyectadas", gridcolor="rgba(255,255,255,.10)", color="#cbd5e1")
+    fig.update_yaxes(color="#e5e7eb", automargin=True, autorange="reversed")
+    return fig
+
+
+def commission_tie_display(alloc: pd.DataFrame) -> pd.DataFrame:
+    if alloc.empty or "empate_residuo" not in alloc.columns:
+        return pd.DataFrame(columns=["Empate", "Curules pendientes", "Residuo empatado", "Bancadas que compiten", "Curules corporación"] )
+    t = alloc[alloc["empate_residuo"].fillna(False)].copy()
+    if t.empty:
+        return pd.DataFrame(columns=["Empate", "Curules pendientes", "Residuo empatado", "Bancadas que compiten", "Curules corporación"] )
+    rows = []
+    for tie_id, g in t.groupby("grupo_empate", sort=False):
+        g = g.sort_values(["curules_corporacion", "bancada"], ascending=[False, True])
+        rows.append({
+            "Empate": tie_id or "Empate por residuo",
+            "Curules pendientes": int(g["cupos_empate_disputados"].max()),
+            "Residuo empatado": f"{float(g['residuo'].iloc[0]):.3f}".replace(".", ","),
+            "Bancadas que compiten": " · ".join(g["bancada"].astype(str).tolist()),
+            "Curules corporación": " · ".join([f"{b}: {int(c)}" for b, c in zip(g["bancada"], g["curules_corporacion"])]),
+        })
+    return pd.DataFrame(rows)
+
+
+def commission_tie_cards(alloc: pd.DataFrame) -> str:
+    """Renderiza empates decisivos como HTML compacto.
+    Importante: se evita HTML indentado en múltiples líneas porque Streamlit/Markdown
+    puede interpretarlo como bloque de código y mostrar etiquetas visibles.
+    """
+    if alloc.empty or "empate_residuo" not in alloc.columns:
+        return ""
+    t = alloc[alloc["empate_residuo"].fillna(False)].copy()
+    if t.empty:
+        return ""
+    panels = []
+    for tie_id, g in t.groupby("grupo_empate", sort=False):
+        g = g.sort_values(["curules_corporacion", "bancada"], ascending=[False, True])
+        pending = int(g["cupos_empate_disputados"].max())
+        residue = f"{float(g['residuo'].iloc[0]):.3f}".replace(".", ",")
+        slots = "".join("<div class='tie-slot'>?</div>" for _ in range(max(pending, 1)))
+        cards = []
+        for _, row in g.iterrows():
+            bancada = clean_value(row.get("bancada"), "No registra")
+            color = party_color(bancada)
+            cards.append(
+                "<div class='tie-card'>"
+                f"<div class='tie-bancada'><span class='tie-dot' style='background:{color};'></span><span>{h(bancada)}</span></div>"
+                "<div class='tie-meta'>"
+                f"<div class='tie-mini'><div class='tie-mini-lab'>Curules corp.</div><div class='tie-mini-val'>{fmt_int(row.get('curules_corporacion', 0))}</div></div>"
+                f"<div class='tie-mini'><div class='tie-mini-lab'>Residuo</div><div class='tie-mini-val'>{residue}</div></div>"
+                "</div>"
+                "</div>"
+            )
+        panels.append(
+            "<div class='tie-panel'>"
+            "<div class='tie-head'>"
+            "<div>"
+            f"<div class='tie-title'>{h(tie_id or 'Empate por residuo')}</div>"
+            f"<div class='tie-sub'>Hay <b>{fmt_int(pending)}</b> curul(es) pendiente(s) por un empate en residuo. El sistema no adjudica automáticamente estos cupos para evitar una asignación arbitraria.</div>"
+            "</div>"
+            f"<div class='tie-pill'>Residuo empatado · {residue}</div>"
+            "</div>"
+            f"<div class='tie-slot-row'>{slots}</div>"
+            f"<div class='tie-grid'>{''.join(cards)}</div>"
+            "</div>"
+        )
+    return "".join(panels)
+
+
+def commission_table_display(alloc: pd.DataFrame) -> pd.DataFrame:
+    table = alloc.copy()
+    if table.empty:
+        return table
+    table = table.rename(columns={
+        "bancada": "Bancada / grupo",
+        "curules_corporacion": "Curules corporación",
+        "cuociente": "Cuociente",
+        "cuota_decimal": "Curules / cuociente",
+        "parte_entera": "Asignación por parte entera",
+        "residuo": "Residuo",
+        "curules_residuo": "Curules por residuo",
+        "curules_comision": "Total comisión",
+        "participacion": "% comisión",
+    })
+    for c in ["Cuociente", "Curules / cuociente", "Residuo"]:
+        table[c] = table[c].map(lambda x: f"{x:.3f}".replace(".", ",") if pd.notna(x) else "—")
+    table["% comisión"] = table["% comisión"].map(lambda x: f"{x:.1f}%".replace(".", ",") if pd.notna(x) else "—")
+    if "empate_residuo" in table.columns:
+        table["Estado residuo"] = table["empate_residuo"].map(lambda x: "Pendiente por empate" if bool(x) else "Asignado / no compite")
+        return table[["Bancada / grupo", "Curules corporación", "Cuociente", "Curules / cuociente", "Asignación por parte entera", "Residuo", "Curules por residuo", "Total comisión", "% comisión", "Estado residuo"]]
+    return table[["Bancada / grupo", "Curules corporación", "Cuociente", "Curules / cuociente", "Asignación por parte entera", "Residuo", "Curules por residuo", "Total comisión", "% comisión"]]
+
 # =============================================================================
 # FILTROS GLOBALES
 # =============================================================================
@@ -999,7 +1330,8 @@ with st.sidebar:
         "4. Apoyos presidenciales",
         "5. Territorio y especiales",
         "6. Fichas técnicas",
-        "7. Directorio y método",
+        "7. Integración de comisiones",
+        "8. Directorio y método",
     ]
     modulo = st.radio("Módulo", module_options, index=0)
     st.markdown("---")
@@ -1148,6 +1480,83 @@ elif modulo.startswith("5"):
             table = sp[["nombre_titulo", "corporacion", "circunscripcion", "territorio_lectura", "partido", "sector", "apoyo_presidencia_primera", "apoyo_presidencia_segunda"]].copy()
             table.columns = ["Congresista", "Corporación", "Circunscripción", "Territorio", "Organización real", "Sector", "1ª vuelta", "2ª vuelta"]
             safe_df(table, height=320)
+
+elif modulo.startswith("7"):
+    guide("Integración de comisiones por cuociente", [
+        "Seleccione corporación, tipo de comisión y comisión específica para proyectar la distribución de cupos por bancada o grupo visual.",
+        "El cálculo usa las curules de la corporación correspondiente; Senado y Cámara se calculan por separado.",
+        "La proyección aplica cuociente electoral: parte entera de la cuota y asignación de cupos restantes por mayores residuos."
+    ])
+    if comisiones_df.empty:
+        st.warning("No se encontró el archivo de integración de comisiones.")
+    else:
+        c1, c2, c3, c4 = st.columns([.85, .95, 1.55, .9])
+        with c1:
+            corp_comm = st.selectbox("Corporación para comisión", ["Cámara", "Senado"], index=0)
+        cm_scope = comisiones_df[comisiones_df["corporacion"] == corp_comm].copy()
+        with c2:
+            tipo_opts = ["Todas"] + sorted(cm_scope["tipo_comision"].dropna().unique().tolist())
+            tipo_comm = st.selectbox("Tipo de comisión", tipo_opts, index=0)
+        cm_type = cm_scope if tipo_comm == "Todas" else cm_scope[cm_scope["tipo_comision"] == tipo_comm].copy()
+        with c3:
+            selected_comm = st.selectbox("Comisión", cm_type["nombre_comision"].tolist(), index=0)
+        row = cm_type[cm_type["nombre_comision"] == selected_comm].iloc[0]
+        restriction = clean_value(row.get("restriccion", ""), "")
+        restricted_citrep = bool(restriction and _norm_key(restriction) == "CITREP")
+        with c4:
+            if restricted_citrep:
+                include_citrep = st.checkbox("Incluir CITREP", value=True, disabled=True, help="Esta comisión está restringida a CITREP; por eso el universo se mantiene en esas curules.")
+            else:
+                include_citrep = st.checkbox("Incluir CITREP", value=True, help="Active o desactive las curules CITREP dentro del universo usado para calcular el cuociente y los cupos adicionales CITREP cuando estén registrados.")
+        seats = effective_commission_seats(row, include_citrep=include_citrep or restricted_citrep)
+        universe = commission_universe(df0, corp_comm, restriction, include_citrep=include_citrep)
+        alloc = allocate_commission(df0, corp_comm, seats, restriction, include_citrep=include_citrep)
+        parties_with_seats = int((alloc["curules_comision"] > 0).sum()) if not alloc.empty else 0
+        quotient = float(alloc["cuociente"].dropna().iloc[0]) if not alloc.empty and alloc["cuociente"].notna().any() else np.nan
+        residue_seats = int(alloc["curules_residuo"].sum()) if not alloc.empty else 0
+        tie_pending = int(alloc["cupos_empate_disputados"].max()) if not alloc.empty and "cupos_empate_disputados" in alloc.columns else 0
+        khtml = "".join([
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cupos comisión</div><div class='group-kpi-value'>{fmt_int(seats)}</div><div class='group-kpi-help'>{h(corp_comm)} · {h(clean_value(row['tipo_comision']))}</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Universo curules</div><div class='group-kpi-value'>{fmt_int(len(universe))}</div><div class='group-kpi-help'>{'CITREP incluido' if include_citrep or restricted_citrep else 'CITREP excluido'}</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cuociente</div><div class='group-kpi-value'>{str(round(quotient,3)).replace('.', ',') if pd.notna(quotient) else '—'}</div><div class='group-kpi-help'>Curules corporación / cupos</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Bancadas con cupo</div><div class='group-kpi-value'>{fmt_int(parties_with_seats)}</div><div class='group-kpi-help'>Grupos que obtienen representación</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cupos asignados por residuo</div><div class='group-kpi-value'>{fmt_int(residue_seats)}</div><div class='group-kpi-help'>Sin empate decisivo</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Pendientes por empate</div><div class='group-kpi-value'>{fmt_int(tie_pending)}</div><div class='group-kpi-help'>Requieren definición política/reglamentaria</div></div>",
+        ])
+        st.markdown(f"<div class='group-kpis'>{khtml}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"""
+<div class='method-card'>
+<b>Proceso aplicado para distribuir los cupos.</b><br>
+1) Se toma el universo de curules de <b>{h(corp_comm)}</b>{' restringido a CITREP' if restriction else ''}, con CITREP <b>{'incluido' if include_citrep or restricted_citrep else 'excluido'}</b> en el análisis general.<br>
+2) Los cupos efectivos de la comisión corresponden al cupo base más las adiciones registradas en la base normativa, cuando aplican: CITREP se suma si el botón está activo y oposición se computa como cupo adicional imputado al partido registrado.<br>
+3) Para este módulo, las curules de <b>oposición</b> se imputan al partido registrado en la base; en este caso, <b>Pacto Histórico</b>, y no a un bloque separado de oposición.<br>
+4) Se calcula el <b>cuociente</b>: total de curules de la corporación dividido por los <b>{fmt_int(seats)}</b> cupos efectivos de la comisión.<br>
+5) Cada bancada recibe la parte entera de <i>curules de la bancada / cuociente</i>.<br>
+6) Los cupos no asignados por parte entera se entregan a los <b>mayores residuos</b>. Si hay empate decisivo en el residuo y los cupos disponibles son menores que las bancadas empatadas, el sistema <b>no adjudica automáticamente</b> esos cupos y los reporta como pendientes.
+<br><span class='small'>Lectura: esta es una proyección matemática de integración por bancada/grupo visual; la designación nominal depende de postulaciones, acuerdos internos y reglas aplicables en cada Cámara.</span>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div class='section-title'>Asignación proyectada de la comisión seleccionada</div>", unsafe_allow_html=True)
+        safe_plot(commission_allocation_fig(alloc, selected_comm), height=560)
+        tie_table = commission_tie_display(alloc)
+        if not tie_table.empty:
+            st.markdown("<div class='section-title'>Curules pendientes por empate en residuo</div>", unsafe_allow_html=True)
+            st.markdown(commission_tie_cards(alloc), unsafe_allow_html=True)
+            with st.expander("Ver detalle técnico de empates", expanded=False):
+                safe_df(tie_table, height=180)
+        else:
+            st.markdown("<div class='tie-empty'><b>Sin empates decisivos.</b><br>En esta comisión los cupos por residuo pueden asignarse sin conflicto matemático entre bancadas empatadas.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Detalle de asignación por cuociente</div>", unsafe_allow_html=True)
+        detalle_alloc = commission_table_display(alloc)
+        safe_df(detalle_alloc, height=430)
+        csv_alloc = detalle_alloc.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button("Descargar asignación de la comisión CSV", data=csv_alloc, file_name="asignacion_comision_por_cuociente.csv", mime="text/csv")
+        st.markdown("<div class='section-title'>Resumen general de comisiones de esta vista</div>", unsafe_allow_html=True)
+        st.markdown("<div class='note'>Lectura consolidada posterior al detalle: compara la distribución proyectada de las comisiones de la corporación y tipo seleccionados.</div>", unsafe_allow_html=True)
+        safe_plot(commission_overview_fig(df0, comisiones_df, corp_comm, tipo_comm, include_citrep=include_citrep), height=700)
 
 elif modulo.startswith("6"):
     guide("Flujo recomendado de consulta", [

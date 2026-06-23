@@ -1,6 +1,7 @@
 {
   "registros": 285,
-  "partidos": 39,
+  "partidos": 38,
+  "grupos_visuales": 22,
   "corporaciones": [
     "Cámara",
     "Senado"
@@ -13,13 +14,9 @@
     "OPOSICIÓN",
     "TERRITORIAL"
   ],
-  "territorios": 78,
-  "fotos_extraidas": 283,
-  "metodologia_votos": "La votación de partido/lista se conserva una sola vez por grupo corporación-circunscripción-departamento-partido y se muestra en el líder de lista; no se imputa como voto individual cuando la lista fue cerrada.",
-  "version": "V7",
-  "ajustes_v7": [
-    "Orden descendente en Senado/Cámara dentro de cada bancada y circunscripciones por sector político.",
-    "Corrección territorial y perfil de Selmen David Arana Cano: Bolívar, Cámara, Cambio Radical y ALMA.",
-    "Correcciones de sector para Germán Rogelio Rozo Anís, Camilo Andrés Gómez Mosquera, Omar Francisco Vidal Rojas, César Antonio Barrera Vergara y Yessid Enrique Pulgar Daza."
-  ]
+  "territorios": 39,
+  "fotos_extraidas": 285,
+  "comisiones": 39,
+  "metodologia_votos": "La votación de partido/lista se conserva una sola vez por grupo corporación-circunscripción-departamento-partido para agregados; en fichas se propaga a integrantes como contexto de lista/grupo.",
+  "metodologia_comisiones": "La asignación proyectada de curules por comisión aplica cuociente electoral: cuota = curules de la corporación / cupos de la comisión; se asigna parte entera y remanentes por mayores residuos."
 }
