@@ -15,6 +15,7 @@ import streamlit.components.v1 as components
 BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR / "data" / "congresistas_2026_2030.csv"
 COMMISSIONS_PATH = BASE_DIR / "data" / "comisiones_definicion.csv"
+APP_VERSION = "v25"
 PLACEHOLDER = BASE_DIR / "assets" / "placeholder.svg"
 
 st.set_page_config(
@@ -202,6 +203,7 @@ SPECIAL_CIRC = {"CITREP", "AFRODESCENDIENTES", "INDÍGENAS", "INDIGENAS", "OPOSI
 
 @_cache_data(show_spinner=False)
 def load_data() -> pd.DataFrame:
+    _app_version = APP_VERSION  # cache-bust v25
     df = pd.read_csv(DATA_PATH, encoding="utf-8-sig")
     text_cols = [
         "cargo", "corporacion", "circunscripcion", "departamento", "territorio_lectura", "partido", "partido_corto",
