@@ -1099,7 +1099,24 @@ def direct_opposition_seats(row, data: pd.DataFrame | None = None, corporation: 
         return 0
     row_value = parse_int_safe(row.get("adicional_oposicion", 0))
     actual = len(opposition_rows_for_corporation(data, corporation)) if corporation else 0
-    return max(row_value, actual)
+    # Por corporación solo existe una curul de oposición que se ubica directamente
+    # en Comisión Primera. Si el archivo trae más de una fila marcada como OPOSICIÓN
+    # por error de clasificación, no deben descontarse dos curules del universo.
+    detected = 1 if actual > 0 else 0
+    configured = 1 if row_value > 0 else 0
+    return max(configured, detected)
+
+
+def constitutional_opposition_exclusion_seats(data: pd.DataFrame | None, corporation: str) -> int:
+    """Curules de oposición que se excluyen del cuociente constitucional.
+
+    La exclusión aplica para comisiones constitucionales porque la curul de
+    oposición se ubica directamente en Comisión Primera. Para evitar descontar
+    más de lo debido cuando el archivo tenga duplicados o clasificaciones
+    accidentales como OPOSICIÓN, se excluye máximo una curul por corporación.
+    """
+    actual = len(opposition_rows_for_corporation(data, corporation)) if corporation else 0
+    return 1 if actual > 0 else 0
 
 
 def effective_commission_seats(row, include_citrep: bool = True, data: pd.DataFrame | None = None, corporation: str = "") -> int:
@@ -1171,7 +1188,10 @@ def commission_universe(data: pd.DataFrame, corporation: str, restriction: str =
         d = d[circ_keys != "CITREP"].copy()
 
     if is_constitucional_commission(commission_type):
-        d = d[d["circunscripcion"].map(_norm_key) != "OPOSICION"].copy()
+        opp_to_exclude = constitutional_opposition_exclusion_seats(data, corporation)
+        if opp_to_exclude > 0:
+            opp_idx = d.index[d["circunscripcion"].map(_norm_key) == "OPOSICION"].tolist()[:opp_to_exclude]
+            d = d.drop(index=opp_idx).copy()
 
     if not d.empty:
         d["bancada_comision"] = d.apply(commission_bancada, axis=1)
