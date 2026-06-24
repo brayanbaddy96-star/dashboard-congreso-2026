@@ -1056,25 +1056,66 @@ def parse_int_safe(x) -> int:
         return int(m.group(0)) if m else 0
 
 
-def effective_commission_seats(row, include_citrep: bool = True) -> int:
-    """Cupos efectivos de la comisión.
+def is_constitucional_commission(commission_type: str) -> bool:
+    return _norm_key(commission_type) == "CONSTITUCIONAL"
 
-    La columna integrantes conserva el cupo base. Las adiciones de la Ley 2267
-    se suman cuando aplica: CITREP si el usuario activa el botón; oposición
-    siempre se computa como cupo adicional, pero su curul se imputa al partido
-    registrado en la base para el universo de bancadas.
+
+def effective_commission_seats(row, include_citrep: bool = True) -> int:
+    """Total normativo de cupos de la comisión.
+
+    Conserva el cupo base registrado en el Excel y suma adiciones cuando aplican.
+    CITREP se suma si el usuario lo incluye. Oposición se muestra como cupo
+    directo cuando esté registrada en la comisión, pero no necesariamente entra
+    al cálculo del cuociente constitucional.
     """
     base = parse_int_safe(row.get("integrantes", 0))
     add_opp = parse_int_safe(row.get("adicional_oposicion", 0))
     add_citrep = parse_int_safe(row.get("adicional_citrep", 0)) if include_citrep else 0
-    return int(base + add_opp + add_citrep)
+    return int(base + add_citrep + add_opp)
+
+
+def direct_opposition_seats(row) -> int:
+    """Cupos de oposición que se registran como asignación directa.
+
+    Regla adoptada en el tablero: para comisiones constitucionales, la curul de
+    oposición no participa en el universo ni en el cuociente porque la norma la
+    ubica directamente en Comisión Primera. En comisiones legales, especiales y
+    accidentales, las curules de oposición sí participan en el cuociente como
+    parte del partido registrado.
+    """
+    if is_constitucional_commission(row.get("tipo_comision", "")):
+        return parse_int_safe(row.get("adicional_oposicion", 0))
+    return 0
+
+
+def quotient_commission_seats(row, include_citrep: bool = True) -> int:
+    """Cupos que se distribuyen por cuociente.
+
+    En comisiones constitucionales se excluyen de este cálculo los cupos directos
+    de oposición. El cupo directo se suma después a la bancada correspondiente.
+    """
+    return max(effective_commission_seats(row, include_citrep=include_citrep) - direct_opposition_seats(row), 0)
+
+
+def opposition_party_for_corporation(data: pd.DataFrame, corporation: str) -> str:
+    """Partido real de la curul de oposición dentro de la corporación."""
+    d = data[data["corporacion"] == corporation].copy()
+    if d.empty or "circunscripcion" not in d.columns:
+        return "PACTO HISTÓRICO"
+    opp = d[d["circunscripcion"].map(_norm_key) == "OPOSICION"].copy()
+    if opp.empty:
+        return "PACTO HISTÓRICO"
+    row = opp.iloc[0]
+    partido = clean_value(row.get("partido_corto", ""), "") or clean_value(row.get("partido", ""), "")
+    return partido or "PACTO HISTÓRICO"
 
 
 def commission_bancada(row) -> str:
     """Agrupación específica para el módulo de comisiones.
 
-    - Las curules por oposición se imputan al partido real registrado, no a un bloque separado.
     - CITREP se conserva como bloque especial y puede incluirse/excluirse desde el módulo.
+    - En comisiones no constitucionales, oposición participa en el cuociente dentro
+      del partido real registrado, no como bloque separado.
     """
     circ = _norm_key(row.get("circunscripcion", ""))
     if circ == "OPOSICION":
@@ -1085,7 +1126,13 @@ def commission_bancada(row) -> str:
     return clean_value(row.get("bloque_visual", ""), "") or clean_value(row.get("partido_corto", ""), "") or clean_value(row.get("partido", ""), "No registra")
 
 
-def commission_universe(data: pd.DataFrame, corporation: str, restriction: str = "", include_citrep: bool = True) -> pd.DataFrame:
+def commission_universe(data: pd.DataFrame, corporation: str, restriction: str = "", include_citrep: bool = True, commission_type: str = "") -> pd.DataFrame:
+    """Universo de curules para calcular cuociente.
+
+    Para constitucionales se excluye oposición del universo de cuociente. Para
+    legales, especiales y accidentales, oposición sí queda incorporada al partido
+    registrado.
+    """
     d = data[data["corporacion"] == corporation].copy()
     circ_keys = d["circunscripcion"].map(_norm_key)
     restricted_citrep = bool(restriction and _norm_key(restriction) == "CITREP")
@@ -1095,25 +1142,30 @@ def commission_universe(data: pd.DataFrame, corporation: str, restriction: str =
     elif not include_citrep:
         d = d[circ_keys != "CITREP"].copy()
 
+    if is_constitucional_commission(commission_type):
+        d = d[d["circunscripcion"].map(_norm_key) != "OPOSICION"].copy()
+
     if not d.empty:
         d["bancada_comision"] = d.apply(commission_bancada, axis=1)
     return d
 
 
-def allocate_commission(data: pd.DataFrame, corporation: str, seats: int, restriction: str = "", include_citrep: bool = True) -> pd.DataFrame:
-    """Proyección por cuociente electoral: cuota = curules corporación / cupos comisión.
+def allocate_commission(data: pd.DataFrame, corporation: str, seats: int, restriction: str = "", include_citrep: bool = True, commission_type: str = "", direct_opposition: int = 0) -> pd.DataFrame:
+    """Proyección por cuociente electoral.
 
-    Se asigna parte entera de la división curules_partido / cuota. Los cupos restantes
-    se asignan por mayores residuos solo cuando no existe empate decisivo. Si varias
-    bancadas tienen el mismo residuo y compiten por menos cupos que competidores, el
-    cupo queda marcado como pendiente por desempate y no se adjudica automáticamente.
+    - seats corresponde a los cupos distribuidos por cuociente.
+    - direct_opposition corresponde a cupos directos de oposición en Comisión
+      Primera constitucional. Esos cupos se suman a la bancada del partido real
+      después del cálculo por cuociente.
+    - Si hay empate decisivo de residuo, los cupos quedan pendientes y no se
+      adjudican automáticamente.
     """
     columns = [
         "bancada", "curules_corporacion", "cuociente", "cuota_decimal", "parte_entera",
-        "residuo", "curules_residuo", "curules_comision", "participacion",
+        "residuo", "curules_residuo", "curules_directas", "curules_comision", "participacion",
         "empate_residuo", "cupos_empate_disputados", "grupo_empate", "competidores_empate"
     ]
-    d = commission_universe(data, corporation, restriction, include_citrep=include_citrep)
+    d = commission_universe(data, corporation, restriction, include_citrep=include_citrep, commission_type=commission_type)
     if d.empty or seats <= 0:
         return pd.DataFrame(columns=columns)
 
@@ -1128,6 +1180,7 @@ def allocate_commission(data: pd.DataFrame, corporation: str, seats: int, restri
     assigned = int(counts["parte_entera"].sum())
     remaining = max(seats - assigned, 0)
     counts["curules_residuo"] = 0
+    counts["curules_directas"] = 0
     counts["empate_residuo"] = False
     counts["cupos_empate_disputados"] = 0
     counts["grupo_empate"] = ""
@@ -1147,8 +1200,6 @@ def allocate_commission(data: pd.DataFrame, corporation: str, seats: int, restri
                 counts.loc[grp_idx, "curules_residuo"] = 1
                 seats_left -= n_competitors
             else:
-                # Empate decisivo: no se adjudican automáticamente los cupos de este tramo.
-                # Quedan pendientes los cupos disponibles y compiten todas las bancadas con el mismo residuo.
                 competitors = counts.loc[grp_idx, "bancada_comision"].astype(str).tolist()
                 tie_id = f"Empate {tie_counter}"
                 counts.loc[grp_idx, "empate_residuo"] = True
@@ -1157,8 +1208,32 @@ def allocate_commission(data: pd.DataFrame, corporation: str, seats: int, restri
                 counts.loc[grp_idx, "competidores_empate"] = "; ".join(competitors)
                 break
 
-    counts["curules_comision"] = counts["parte_entera"] + counts["curules_residuo"]
-    counts["participacion"] = counts["curules_comision"] / seats * 100 if seats else 0
+    direct_opposition = parse_int_safe(direct_opposition)
+    if direct_opposition > 0:
+        direct_party = opposition_party_for_corporation(data, corporation)
+        mask = counts["bancada_comision"] == direct_party
+        if mask.any():
+            counts.loc[mask, "curules_directas"] = counts.loc[mask, "curules_directas"] + direct_opposition
+        else:
+            extra = pd.DataFrame([{
+                "bancada_comision": direct_party,
+                "curules_corporacion": 0,
+                "cuociente": quotient,
+                "cuota_decimal": 0,
+                "parte_entera": 0,
+                "residuo": 0,
+                "curules_residuo": 0,
+                "curules_directas": direct_opposition,
+                "empate_residuo": False,
+                "cupos_empate_disputados": 0,
+                "grupo_empate": "",
+                "competidores_empate": "",
+            }])
+            counts = pd.concat([counts, extra], ignore_index=True)
+
+    counts["curules_comision"] = counts["parte_entera"] + counts["curules_residuo"] + counts["curules_directas"]
+    total_effective_seats = seats + direct_opposition
+    counts["participacion"] = counts["curules_comision"] / total_effective_seats * 100 if total_effective_seats else 0
     counts = counts.rename(columns={"bancada_comision": "bancada"})
     counts = counts.sort_values(["curules_comision", "curules_corporacion", "residuo"], ascending=[False, False, False]).reset_index(drop=True)
     return counts[columns]
@@ -1172,8 +1247,8 @@ def commission_allocation_fig(alloc: pd.DataFrame, commission_name: str) -> go.F
         x=d["curules_comision"], y=[abbreviate(x, 28) for x in d["bancada"]], orientation="h",
         marker=dict(color=colors, line=dict(color="rgba(255,255,255,.72)", width=1)),
         text=[fmt_int(x) for x in d["curules_comision"]], textposition="outside", cliponaxis=False,
-        customdata=np.stack([d["bancada"], d["curules_corporacion"], d["parte_entera"], d["residuo"], d["curules_residuo"]], axis=-1) if not d.empty else None,
-        hovertemplate="<b>%{customdata[0]}</b><br>Curules corporación: %{customdata[1]}<br>Parte entera: %{customdata[2]}<br>Residuo: %{customdata[3]:.3f}<br>Curul por residuo: %{customdata[4]}<br>Total comisión: %{x}<extra></extra>",
+        customdata=np.stack([d["bancada"], d["curules_corporacion"], d["parte_entera"], d["residuo"], d["curules_residuo"], d.get("curules_directas", pd.Series([0]*len(d))).fillna(0)], axis=-1) if not d.empty else None,
+        hovertemplate="<b>%{customdata[0]}</b><br>Curules corporación: %{customdata[1]}<br>Parte entera: %{customdata[2]}<br>Residuo: %{customdata[3]:.3f}<br>Curul por residuo: %{customdata[4]}<br>Cupo directo oposición: %{customdata[5]}<br>Total comisión: %{x}<extra></extra>",
     ))
     mx = float(d["curules_comision"].max()) if not d.empty else 1
     fig.update_layout(title=dict(text=f"Asignación proyectada · {commission_name}", x=.02), height=max(420, 31*len(d)+115), margin=dict(l=185, r=55, t=65, b=45), showlegend=False)
@@ -1190,8 +1265,8 @@ def commission_overview_fig(data: pd.DataFrame, commissions: pd.DataFrame, corpo
     for _, r in cm.iterrows():
         if not include_citrep and _norm_key(r.get("restriccion", "")) == "CITREP":
             continue
-        eff_seats = effective_commission_seats(r, include_citrep=include_citrep)
-        alloc = allocate_commission(data, r["corporacion"], eff_seats, r.get("restriccion", ""), include_citrep=include_citrep)
+        quotient_seats = quotient_commission_seats(r, include_citrep=include_citrep)
+        alloc = allocate_commission(data, r["corporacion"], quotient_seats, r.get("restriccion", ""), include_citrep=include_citrep, commission_type=r.get("tipo_comision", ""), direct_opposition=direct_opposition_seats(r))
         if alloc.empty:
             continue
         for a in alloc.itertuples(index=False):
@@ -1305,6 +1380,7 @@ def commission_table_display(alloc: pd.DataFrame) -> pd.DataFrame:
         "parte_entera": "Asignación por parte entera",
         "residuo": "Residuo",
         "curules_residuo": "Curules por residuo",
+        "curules_directas": "Cupo directo oposición",
         "curules_comision": "Total comisión",
         "participacion": "% comisión",
     })
@@ -1313,8 +1389,8 @@ def commission_table_display(alloc: pd.DataFrame) -> pd.DataFrame:
     table["% comisión"] = table["% comisión"].map(lambda x: f"{x:.1f}%".replace(".", ",") if pd.notna(x) else "—")
     if "empate_residuo" in table.columns:
         table["Estado residuo"] = table["empate_residuo"].map(lambda x: "Pendiente por empate" if bool(x) else "Asignado / no compite")
-        return table[["Bancada / grupo", "Curules corporación", "Cuociente", "Curules / cuociente", "Asignación por parte entera", "Residuo", "Curules por residuo", "Total comisión", "% comisión", "Estado residuo"]]
-    return table[["Bancada / grupo", "Curules corporación", "Cuociente", "Curules / cuociente", "Asignación por parte entera", "Residuo", "Curules por residuo", "Total comisión", "% comisión"]]
+        return table[["Bancada / grupo", "Curules corporación", "Cuociente", "Curules / cuociente", "Asignación por parte entera", "Residuo", "Curules por residuo", "Cupo directo oposición", "Total comisión", "% comisión", "Estado residuo"]]
+    return table[["Bancada / grupo", "Curules corporación", "Cuociente", "Curules / cuociente", "Asignación por parte entera", "Residuo", "Curules por residuo", "Cupo directo oposición", "Total comisión", "% comisión"]]
 
 # =============================================================================
 # FILTROS GLOBALES
@@ -1508,19 +1584,21 @@ elif modulo.startswith("7"):
                 include_citrep = st.checkbox("Incluir CITREP", value=True, disabled=True, help="Esta comisión está restringida a CITREP; por eso el universo se mantiene en esas curules.")
             else:
                 include_citrep = st.checkbox("Incluir CITREP", value=True, help="Active o desactive las curules CITREP dentro del universo usado para calcular el cuociente y los cupos adicionales CITREP cuando estén registrados.")
-        seats = effective_commission_seats(row, include_citrep=include_citrep or restricted_citrep)
-        universe = commission_universe(df0, corp_comm, restriction, include_citrep=include_citrep)
-        alloc = allocate_commission(df0, corp_comm, seats, restriction, include_citrep=include_citrep)
-        parties_with_seats = int((alloc["curules_comision"] > 0).sum()) if not alloc.empty else 0
+        total_seats = effective_commission_seats(row, include_citrep=include_citrep or restricted_citrep)
+        quotient_seats = quotient_commission_seats(row, include_citrep=include_citrep or restricted_citrep)
+        direct_opp = direct_opposition_seats(row)
+        universe = commission_universe(df0, corp_comm, restriction, include_citrep=include_citrep or restricted_citrep, commission_type=row.get("tipo_comision", ""))
+        alloc = allocate_commission(df0, corp_comm, quotient_seats, restriction, include_citrep=include_citrep or restricted_citrep, commission_type=row.get("tipo_comision", ""), direct_opposition=direct_opp)
         quotient = float(alloc["cuociente"].dropna().iloc[0]) if not alloc.empty and alloc["cuociente"].notna().any() else np.nan
         residue_seats = int(alloc["curules_residuo"].sum()) if not alloc.empty else 0
         tie_pending = int(alloc["cupos_empate_disputados"].max()) if not alloc.empty and "cupos_empate_disputados" in alloc.columns else 0
+        constitutional_note = "Oposición excluida del cuociente" if is_constitucional_commission(row.get("tipo_comision", "")) else "Oposición incluida en el cuociente"
         khtml = "".join([
-            f"<div class='group-kpi'><div class='group-kpi-label'>Cupos comisión</div><div class='group-kpi-value'>{fmt_int(seats)}</div><div class='group-kpi-help'>{h(corp_comm)} · {h(clean_value(row['tipo_comision']))}</div></div>",
-            f"<div class='group-kpi'><div class='group-kpi-label'>Universo curules</div><div class='group-kpi-value'>{fmt_int(len(universe))}</div><div class='group-kpi-help'>{'CITREP incluido' if include_citrep or restricted_citrep else 'CITREP excluido'}</div></div>",
-            f"<div class='group-kpi'><div class='group-kpi-label'>Cuociente</div><div class='group-kpi-value'>{str(round(quotient,3)).replace('.', ',') if pd.notna(quotient) else '—'}</div><div class='group-kpi-help'>Curules corporación / cupos</div></div>",
-            f"<div class='group-kpi'><div class='group-kpi-label'>Bancadas con cupo</div><div class='group-kpi-value'>{fmt_int(parties_with_seats)}</div><div class='group-kpi-help'>Grupos que obtienen representación</div></div>",
-            f"<div class='group-kpi'><div class='group-kpi-label'>Cupos asignados por residuo</div><div class='group-kpi-value'>{fmt_int(residue_seats)}</div><div class='group-kpi-help'>Sin empate decisivo</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cupos totales</div><div class='group-kpi-value'>{fmt_int(total_seats)}</div><div class='group-kpi-help'>{h(corp_comm)} · {h(clean_value(row['tipo_comision']))}</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cupos por cuociente</div><div class='group-kpi-value'>{fmt_int(quotient_seats)}</div><div class='group-kpi-help'>Base distribuida matemáticamente</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Universo curules</div><div class='group-kpi-value'>{fmt_int(len(universe))}</div><div class='group-kpi-help'>{'CITREP incluido' if include_citrep or restricted_citrep else 'CITREP excluido'} · {constitutional_note}</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cuociente</div><div class='group-kpi-value'>{str(round(quotient,3)).replace('.', ',') if pd.notna(quotient) else '—'}</div><div class='group-kpi-help'>Universo / cupos por cuociente</div></div>",
+            f"<div class='group-kpi'><div class='group-kpi-label'>Cupo directo oposición</div><div class='group-kpi-value'>{fmt_int(direct_opp)}</div><div class='group-kpi-help'>Aplica solo en constitucionales</div></div>",
             f"<div class='group-kpi'><div class='group-kpi-label'>Pendientes por empate</div><div class='group-kpi-value'>{fmt_int(tie_pending)}</div><div class='group-kpi-help'>Requieren definición política/reglamentaria</div></div>",
         ])
         st.markdown(f"<div class='group-kpis'>{khtml}</div>", unsafe_allow_html=True)
@@ -1529,11 +1607,11 @@ elif modulo.startswith("7"):
 <div class='method-card'>
 <b>Proceso aplicado para distribuir los cupos.</b><br>
 1) Se toma el universo de curules de <b>{h(corp_comm)}</b>{' restringido a CITREP' if restriction else ''}, con CITREP <b>{'incluido' if include_citrep or restricted_citrep else 'excluido'}</b> en el análisis general.<br>
-2) Los cupos efectivos de la comisión corresponden al cupo base más las adiciones registradas en la base normativa, cuando aplican: CITREP se suma si el botón está activo y oposición se computa como cupo adicional imputado al partido registrado.<br>
-3) Para este módulo, las curules de <b>oposición</b> se imputan al partido registrado en la base; en este caso, <b>Pacto Histórico</b>, y no a un bloque separado de oposición.<br>
-4) Se calcula el <b>cuociente</b>: total de curules de la corporación dividido por los <b>{fmt_int(seats)}</b> cupos efectivos de la comisión.<br>
-5) Cada bancada recibe la parte entera de <i>curules de la bancada / cuociente</i>.<br>
-6) Los cupos no asignados por parte entera se entregan a los <b>mayores residuos</b>. Si hay empate decisivo en el residuo y los cupos disponibles son menores que las bancadas empatadas, el sistema <b>no adjudica automáticamente</b> esos cupos y los reporta como pendientes.
+2) Los <b>cupos totales</b> de la comisión son <b>{fmt_int(total_seats)}</b>. De ellos, <b>{fmt_int(quotient_seats)}</b> se distribuyen por cuociente y <b>{fmt_int(direct_opp)}</b> se registran como cupo directo de oposición cuando aplica.<br>
+3) Regla de oposición: en <b>comisiones constitucionales</b>, la curul de oposición no entra al universo ni al cuociente porque se ubica directamente en Comisión Primera. En <b>legales, especiales y accidentales</b>, sí participa en el cuociente dentro del partido registrado.<br>
+4) Se calcula el <b>cuociente</b>: universo de curules de la corporación dividido por los <b>{fmt_int(quotient_seats)}</b> cupos sujetos a distribución matemática.<br>
+5) Cada bancada recibe la parte entera de <i>curules de la bancada / cuociente</i> y los cupos restantes se asignan por mayores residuos.<br>
+6) Si hay empate decisivo en residuo y los cupos disponibles son menores que las bancadas empatadas, el sistema <b>no adjudica automáticamente</b> esos cupos y los reporta como pendientes.
 <br><span class='small'>Lectura: esta es una proyección matemática de integración por bancada/grupo visual; la designación nominal depende de postulaciones, acuerdos internos y reglas aplicables en cada Cámara.</span>
 </div>
 """,
