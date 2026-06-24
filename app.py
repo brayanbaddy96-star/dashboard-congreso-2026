@@ -281,8 +281,17 @@ def load_data() -> pd.DataFrame:
 df0 = load_data()
 
 
+def file_signature(path: Path) -> str:
+    """Firma simple para invalidar caché cuando cambian los archivos de datos."""
+    try:
+        stt = path.stat()
+        return f"{stt.st_size}-{stt.st_mtime_ns}"
+    except Exception:
+        return "missing"
+
+
 @_cache_data(show_spinner=False)
-def load_commissions() -> pd.DataFrame:
+def load_commissions(_file_signature: str = "") -> pd.DataFrame:
     if not COMMISSIONS_PATH.exists():
         return pd.DataFrame(columns=["categoria", "corporacion", "tipo_comision", "nombre_comision", "cantidad_integrantes", "integrantes", "restriccion"])
     cm = pd.read_csv(COMMISSIONS_PATH, encoding="utf-8-sig")
@@ -303,7 +312,7 @@ def load_commissions() -> pd.DataFrame:
     return cm
 
 
-comisiones_df = load_commissions()
+comisiones_df = load_commissions(file_signature(COMMISSIONS_PATH))
 
 # =============================================================================
 # UTILIDADES
@@ -1060,41 +1069,60 @@ def is_constitucional_commission(commission_type: str) -> bool:
     return _norm_key(commission_type) == "CONSTITUCIONAL"
 
 
-def effective_commission_seats(row, include_citrep: bool = True) -> int:
+def opposition_rows_for_corporation(data: pd.DataFrame | None, corporation: str) -> pd.DataFrame:
+    """Filas de oposición registradas para una corporación."""
+    if data is None or data.empty or "circunscripcion" not in data.columns:
+        return pd.DataFrame()
+    d = data[data["corporacion"] == corporation].copy()
+    if d.empty:
+        return pd.DataFrame()
+    return d[d["circunscripcion"].map(_norm_key) == "OPOSICION"].copy()
+
+
+def direct_opposition_seats(row, data: pd.DataFrame | None = None, corporation: str = "") -> int:
+    """Cupos de oposición que se registran como asignación directa.
+
+    Regla corregida del tablero:
+    - Solo aplica en Comisión Primera de las comisiones constitucionales.
+    - En esas comisiones, la curul de oposición NO entra al universo ni al
+      cuociente, porque la norma la ubica directamente en Comisión Primera.
+    - Si el Excel trae adicional_oposicion=0 por error o queda cacheado, el
+      tablero lo infiere desde la fila real de circunscripción OPOSICIÓN.
+    - En legales, especiales y accidentales, oposición sí participa en el
+      cuociente como parte del partido registrado.
+    """
+    tipo = row.get("tipo_comision", "")
+    nombre = row.get("nombre_comision", "")
+    if not is_constitucional_commission(tipo):
+        return 0
+    if "PRIMERA" not in _norm_key(nombre):
+        return 0
+    row_value = parse_int_safe(row.get("adicional_oposicion", 0))
+    actual = len(opposition_rows_for_corporation(data, corporation)) if corporation else 0
+    return max(row_value, actual)
+
+
+def effective_commission_seats(row, include_citrep: bool = True, data: pd.DataFrame | None = None, corporation: str = "") -> int:
     """Total normativo de cupos de la comisión.
 
     Conserva el cupo base registrado en el Excel y suma adiciones cuando aplican.
-    CITREP se suma si el usuario lo incluye. Oposición se muestra como cupo
-    directo cuando esté registrada en la comisión, pero no necesariamente entra
-    al cálculo del cuociente constitucional.
+    CITREP se suma si el usuario lo incluye. La oposición solo se suma como cupo
+    directo en Comisión Primera constitucional, y no entra al cuociente.
     """
     base = parse_int_safe(row.get("integrantes", 0))
-    add_opp = parse_int_safe(row.get("adicional_oposicion", 0))
+    add_opp = direct_opposition_seats(row, data=data, corporation=corporation)
     add_citrep = parse_int_safe(row.get("adicional_citrep", 0)) if include_citrep else 0
     return int(base + add_citrep + add_opp)
 
 
-def direct_opposition_seats(row) -> int:
-    """Cupos de oposición que se registran como asignación directa.
-
-    Regla adoptada en el tablero: para comisiones constitucionales, la curul de
-    oposición no participa en el universo ni en el cuociente porque la norma la
-    ubica directamente en Comisión Primera. En comisiones legales, especiales y
-    accidentales, las curules de oposición sí participan en el cuociente como
-    parte del partido registrado.
-    """
-    if is_constitucional_commission(row.get("tipo_comision", "")):
-        return parse_int_safe(row.get("adicional_oposicion", 0))
-    return 0
-
-
-def quotient_commission_seats(row, include_citrep: bool = True) -> int:
+def quotient_commission_seats(row, include_citrep: bool = True, data: pd.DataFrame | None = None, corporation: str = "") -> int:
     """Cupos que se distribuyen por cuociente.
 
-    En comisiones constitucionales se excluyen de este cálculo los cupos directos
-    de oposición. El cupo directo se suma después a la bancada correspondiente.
+    En Comisión Primera constitucional se excluyen del cuociente los cupos
+    directos de oposición. El cupo directo se suma después a la bancada real.
     """
-    return max(effective_commission_seats(row, include_citrep=include_citrep) - direct_opposition_seats(row), 0)
+    total = effective_commission_seats(row, include_citrep=include_citrep, data=data, corporation=corporation)
+    return max(total - direct_opposition_seats(row, data=data, corporation=corporation), 0)
 
 
 def opposition_party_for_corporation(data: pd.DataFrame, corporation: str) -> str:
@@ -1102,7 +1130,7 @@ def opposition_party_for_corporation(data: pd.DataFrame, corporation: str) -> st
     d = data[data["corporacion"] == corporation].copy()
     if d.empty or "circunscripcion" not in d.columns:
         return "PACTO HISTÓRICO"
-    opp = d[d["circunscripcion"].map(_norm_key) == "OPOSICION"].copy()
+    opp = opposition_rows_for_corporation(data, corporation)
     if opp.empty:
         return "PACTO HISTÓRICO"
     row = opp.iloc[0]
@@ -1265,8 +1293,8 @@ def commission_overview_fig(data: pd.DataFrame, commissions: pd.DataFrame, corpo
     for _, r in cm.iterrows():
         if not include_citrep and _norm_key(r.get("restriccion", "")) == "CITREP":
             continue
-        quotient_seats = quotient_commission_seats(r, include_citrep=include_citrep)
-        alloc = allocate_commission(data, r["corporacion"], quotient_seats, r.get("restriccion", ""), include_citrep=include_citrep, commission_type=r.get("tipo_comision", ""), direct_opposition=direct_opposition_seats(r))
+        quotient_seats = quotient_commission_seats(r, include_citrep=include_citrep, data=data, corporation=r["corporacion"])
+        alloc = allocate_commission(data, r["corporacion"], quotient_seats, r.get("restriccion", ""), include_citrep=include_citrep, commission_type=r.get("tipo_comision", ""), direct_opposition=direct_opposition_seats(r, data=data, corporation=r["corporacion"]))
         if alloc.empty:
             continue
         for a in alloc.itertuples(index=False):
@@ -1584,15 +1612,15 @@ elif modulo.startswith("7"):
                 include_citrep = st.checkbox("Incluir CITREP", value=True, disabled=True, help="Esta comisión está restringida a CITREP; por eso el universo se mantiene en esas curules.")
             else:
                 include_citrep = st.checkbox("Incluir CITREP", value=True, help="Active o desactive las curules CITREP dentro del universo usado para calcular el cuociente y los cupos adicionales CITREP cuando estén registrados.")
-        total_seats = effective_commission_seats(row, include_citrep=include_citrep or restricted_citrep)
-        quotient_seats = quotient_commission_seats(row, include_citrep=include_citrep or restricted_citrep)
-        direct_opp = direct_opposition_seats(row)
+        total_seats = effective_commission_seats(row, include_citrep=include_citrep or restricted_citrep, data=df0, corporation=corp_comm)
+        quotient_seats = quotient_commission_seats(row, include_citrep=include_citrep or restricted_citrep, data=df0, corporation=corp_comm)
+        direct_opp = direct_opposition_seats(row, data=df0, corporation=corp_comm)
         universe = commission_universe(df0, corp_comm, restriction, include_citrep=include_citrep or restricted_citrep, commission_type=row.get("tipo_comision", ""))
         alloc = allocate_commission(df0, corp_comm, quotient_seats, restriction, include_citrep=include_citrep or restricted_citrep, commission_type=row.get("tipo_comision", ""), direct_opposition=direct_opp)
         quotient = float(alloc["cuociente"].dropna().iloc[0]) if not alloc.empty and alloc["cuociente"].notna().any() else np.nan
         residue_seats = int(alloc["curules_residuo"].sum()) if not alloc.empty else 0
         tie_pending = int(alloc["cupos_empate_disputados"].max()) if not alloc.empty and "cupos_empate_disputados" in alloc.columns else 0
-        constitutional_note = "Oposición excluida del cuociente" if is_constitucional_commission(row.get("tipo_comision", "")) else "Oposición incluida en el cuociente"
+        constitutional_note = "Oposición excluida del cuociente" if (is_constitucional_commission(row.get("tipo_comision", "")) and "PRIMERA" in _norm_key(row.get("nombre_comision", ""))) else ("Oposición excluida del universo constitucional" if is_constitucional_commission(row.get("tipo_comision", "")) else "Oposición incluida en el cuociente")
         khtml = "".join([
             f"<div class='group-kpi'><div class='group-kpi-label'>Cupos totales</div><div class='group-kpi-value'>{fmt_int(total_seats)}</div><div class='group-kpi-help'>{h(corp_comm)} · {h(clean_value(row['tipo_comision']))}</div></div>",
             f"<div class='group-kpi'><div class='group-kpi-label'>Cupos por cuociente</div><div class='group-kpi-value'>{fmt_int(quotient_seats)}</div><div class='group-kpi-help'>Base distribuida matemáticamente</div></div>",
